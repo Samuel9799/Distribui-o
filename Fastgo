@@ -1,0 +1,322 @@
+const express = require("express");
+const bodyParser = require("body-parser");
+const path = require("path");
+const moment = require("moment");
+const sqlite3 = require("sqlite3").verbose();
+
+const app = express();
+const PORT = 3000;
+
+// Configurar o banco de dados
+const db = new sqlite3.Database("./database.sqlite", (err) => {
+  if (err) {
+    console.error("Erro ao conectar ao banco de dados", err);
+  } else {
+    console.log("Conectado ao banco de dados SQLite");
+    createTables();
+  }
+});
+
+// Criar tabelas no banco de dados
+function createTables() {
+  db.serialize(() => {
+    // Tabela de ateliês
+    db.run(`CREATE TABLE IF NOT EXISTS atelies (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nome TEXT NOT NULL,
+      contato TEXT,
+      endereco TEXT
+    )`);
+
+    // Tabela de produtos
+    db.run(`CREATE TABLE IF NOT EXISTS produtos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nome TEXT NOT NULL,
+      referencia TEXT,
+      tempo_producao REAL NOT NULL
+    )`);
+
+    // Tabela de envios
+    db.run(`CREATE TABLE IF NOT EXISTS envios (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      atelie_id INTEGER NOT NULL,
+      produto_id INTEGER NOT NULL,
+      quantidade INTEGER NOT NULL,
+      quantidade_retorno INTEGER,
+      data_envio TEXT NOT NULL,
+      data_prevista_retorno TEXT NOT NULL,
+      data_retorno TEXT,
+      status TEXT DEFAULT 'pendente',
+      FOREIGN KEY (atelie_id) REFERENCES atelies (id),
+      FOREIGN KEY (produto_id) REFERENCES produtos (id)
+    )`);
+  });
+}
+
+// Middleware
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, "public")));
+app.use("/node_modules", express.static(path.join(__dirname, "node_modules")));
+
+// Rotas para API
+
+// Ateliês
+app.get("/api/atelies", (req, res) => {
+  db.all("SELECT * FROM atelies", (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    res.json(rows);
+  });
+});
+
+app.post("/api/atelies", (req, res) => {
+  const { nome, contato, endereco } = req.body;
+  db.run(
+    "INSERT INTO atelies (nome, contato, endereco) VALUES (?, ?, ?)",
+    [nome, contato, endereco],
+    function (err) {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+      res.json({ id: this.lastID });
+    },
+  );
+});
+
+// Produtos
+app.get("/api/produtos", (req, res) => {
+  db.all("SELECT * FROM produtos", (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    res.json(rows);
+  });
+});
+
+app.post("/api/produtos", (req, res) => {
+  const { nome, tempo_producao, referencia } = req.body;
+  db.run(
+    "INSERT INTO produtos (nome, referencia, tempo_producao) VALUES (?, ?, ?)",
+    [nome, referencia, tempo_producao],
+    function (err) {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+      res.json({ id: this.lastID });
+    },
+  );
+});
+
+// Envios
+app.get("/api/envios", (req, res) => {
+  const query = `
+    SELECT e.*, a.nome as atelie_nome, p.nome as produto_nome, p.referencia as produto_referencia
+    FROM envios e
+    JOIN atelies a ON e.atelie_id = a.id
+    JOIN produtos p ON e.produto_id = p.id
+  `;
+
+  db.all(query, (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    res.json(rows);
+  });
+});
+
+app.post("/api/envios", (req, res) => {
+  const { atelie_id, produto_id, quantidade, data_envio } = req.body;
+
+  // Buscar o tempo de produção do produto
+  db.get(
+    "SELECT tempo_producao FROM produtos WHERE id = ?",
+    [produto_id],
+    (err, produto) => {
+      if (err || !produto) {
+        res
+          .status(500)
+          .json({ error: err ? err.message : "Produto não encontrado" });
+        return;
+      }
+
+      // Calcular data prevista de retorno
+      const horasNecessarias = quantidade / produto.tempo_producao;
+      const diasNecessarios = Math.ceil(horasNecessarias / 8); // 8 horas de trabalho por dia
+
+      const dataEnvio = moment(data_envio);
+      const dataPrevistaRetorno = dataEnvio
+        .clone()
+        .add(diasNecessarios, "days")
+        .format("YYYY-MM-DD");
+
+      // Inserir o envio
+      db.run(
+        "INSERT INTO envios (atelie_id, produto_id, quantidade, data_envio, data_prevista_retorno) VALUES (?, ?, ?, ?, ?)",
+        [atelie_id, produto_id, quantidade, data_envio, dataPrevistaRetorno],
+        function (err) {
+          if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+          }
+          res.json({
+            id: this.lastID,
+            data_prevista_retorno: dataPrevistaRetorno,
+          });
+        },
+      );
+    },
+  );
+});
+
+// Registrar retorno
+app.put("/api/envios/:id/retorno", (req, res) => {
+  const { id } = req.params;
+  const { data_retorno, quantidade_retorno } = req.body;
+
+  // Verificar se temos a quantidade de retorno
+  const updateFields = ["data_retorno = ?", "status = ?"];
+  const updateValues = [data_retorno, "concluido"];
+
+  // Se tiver quantidade_retorno, adicionar ao update
+  if (quantidade_retorno) {
+    updateFields.push("quantidade_retorno = ?");
+    updateValues.push(quantidade_retorno);
+  }
+
+  // Adicionar o id ao final dos valores
+  updateValues.push(id);
+
+  const query = `UPDATE envios SET ${updateFields.join(", ")} WHERE id = ?`;
+
+  db.run(query, updateValues, function (err) {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+
+    if (this.changes === 0) {
+      res.status(404).json({ error: "Envio não encontrado" });
+      return;
+    }
+
+    res.json({ success: true });
+  });
+});
+
+// Rota para obter envios pendentes (em atraso ou não)
+app.get("/api/envios/pendentes", (req, res) => {
+  const hoje = moment().format("YYYY-MM-DD");
+
+  const query = `
+    SELECT e.*, a.nome as atelie_nome, p.nome as produto_nome, p.referencia as produto_referencia,
+           CASE WHEN e.data_prevista_retorno < ? THEN 'atrasado' ELSE 'dentro_prazo' END as situacao
+    FROM envios e
+    JOIN atelies a ON e.atelie_id = a.id
+    JOIN produtos p ON e.produto_id = p.id
+    WHERE e.data_retorno IS NULL
+    ORDER BY e.data_prevista_retorno ASC
+  `;
+
+  db.all(query, [hoje], (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    res.json(rows);
+  });
+});
+
+// Rota para obter envios com previsão de retorno para hoje
+app.get("/api/envios/previstos-hoje", (req, res) => {
+  const hoje = moment().format("YYYY-MM-DD");
+
+  const query = `
+    SELECT e.*, a.nome as atelie_nome, p.nome as produto_nome, p.referencia as produto_referencia
+    FROM envios e
+    JOIN atelies a ON e.atelie_id = a.id
+    JOIN produtos p ON e.produto_id = p.id
+    WHERE e.data_prevista_retorno = ? AND e.data_retorno IS NULL
+    ORDER BY a.nome ASC
+  `;
+
+  db.all(query, [hoje], (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    res.json(rows);
+  });
+});
+
+// Rota para gerar relatório PDF
+app.get("/api/relatorios/retornos-hoje", (req, res) => {
+  const hoje = moment().format("YYYY-MM-DD");
+
+  const query = `
+    SELECT e.*, a.nome as atelie_nome, p.nome as produto_nome
+    FROM envios e
+    JOIN atelies a ON e.atelie_id = a.id
+    JOIN produtos p ON e.produto_id = p.id
+    WHERE e.data_prevista_retorno = ? AND e.data_retorno IS NULL
+    ORDER BY a.nome ASC
+  `;
+
+  db.all(query, [hoje], (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+
+    // Aqui normalmente geraria um PDF, mas por ora vamos retornar os dados
+    // para que o frontend possa gerar o PDF usando uma biblioteca JS
+    res.json({
+      data: rows,
+      titulo: `Relatório de Retornos Previstos para ${moment(hoje).format("DD/MM/YYYY")}`,
+      gerado_em: moment().format("DD/MM/YYYY HH:mm:ss"),
+    });
+  });
+});
+
+// Rota para reconhecimento de produtos (simulada)
+app.post("/api/reconhecimento-produto", (req, res) => {
+  // Em uma implementação real, isso processaria uma imagem
+  // e usaria um modelo de ML para reconhecer o produto
+
+  // Vamos simular um reconhecimento retornando um produto aleatório
+  db.all("SELECT * FROM produtos", (err, produtos) => {
+    if (err || !produtos.length) {
+      res
+        .status(500)
+        .json({ error: err ? err.message : "Nenhum produto encontrado" });
+      return;
+    }
+
+    const produtoAleatorio =
+      produtos[Math.floor(Math.random() * produtos.length)];
+
+    // Simular um atraso de processamento
+    setTimeout(() => {
+      res.json({
+        success: true,
+        produto: produtoAleatorio,
+      });
+    }, 1000);
+  });
+});
+
+// Servir o frontend
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+// Iniciar o servidor
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Servidor rodando em http://0.0.0.0:${PORT}`);
+});
