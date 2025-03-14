@@ -1,18 +1,18 @@
-const express = require("express");
-const bodyParser = require("body-parser");
-const path = require("path");
-const moment = require("moment");
-const sqlite3 = require("sqlite3").verbose();
+const express = require('express');
+const bodyParser = require('body-parser');
+const path = require('path');
+const moment = require('moment');
+const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
 const PORT = 3000;
 
 // Configurar o banco de dados
-const db = new sqlite3.Database("./database.sqlite", (err) => {
+const db = new sqlite3.Database('./database.sqlite', (err) => {
   if (err) {
-    console.error("Erro ao conectar ao banco de dados", err);
+    console.error('Erro ao conectar ao banco de dados', err);
   } else {
-    console.log("Conectado ao banco de dados SQLite");
+    console.log('Conectado ao banco de dados SQLite');
     createTables();
   }
 });
@@ -56,14 +56,14 @@ function createTables() {
 // Middleware
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, "public")));
-app.use("/node_modules", express.static(path.join(__dirname, "node_modules")));
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/node_modules', express.static(path.join(__dirname, 'node_modules')));
 
 // Rotas para API
 
 // Ateliês
-app.get("/api/atelies", (req, res) => {
-  db.all("SELECT * FROM atelies", (err, rows) => {
+app.get('/api/atelies', (req, res) => {
+  db.all('SELECT * FROM atelies ORDER BY nome ASC', (err, rows) => {
     if (err) {
       res.status(500).json({ error: err.message });
       return;
@@ -72,24 +72,84 @@ app.get("/api/atelies", (req, res) => {
   });
 });
 
-app.post("/api/atelies", (req, res) => {
+app.post('/api/atelies', (req, res) => {
   const { nome, contato, endereco } = req.body;
-  db.run(
-    "INSERT INTO atelies (nome, contato, endereco) VALUES (?, ?, ?)",
-    [nome, contato, endereco],
-    function (err) {
+
+  if (!nome) {
+    return res.status(400).json({ error: 'Nome do ateliê é obrigatório' });
+  }
+
+  db.run('INSERT INTO atelies (nome, contato, endereco) VALUES (?, ?, ?)', 
+    [nome, contato, endereco], 
+    function(err) {
       if (err) {
         res.status(500).json({ error: err.message });
         return;
       }
-      res.json({ id: this.lastID });
-    },
+      res.json({ id: this.lastID, nome, contato, endereco });
+    }
   );
+});
+
+app.put('/api/atelies/:id', (req, res) => {
+  const { id } = req.params;
+  const { nome, contato, endereco } = req.body;
+
+  if (!nome) {
+    return res.status(400).json({ error: 'Nome do ateliê é obrigatório' });
+  }
+
+  db.run('UPDATE atelies SET nome = ?, contato = ?, endereco = ? WHERE id = ?',
+    [nome, contato, endereco, id],
+    function(err) {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+
+      if (this.changes === 0) {
+        res.status(404).json({ error: 'Ateliê não encontrado' });
+        return;
+      }
+
+      res.json({ id, nome, contato, endereco, updated: true });
+    }
+  );
+});
+
+app.delete('/api/atelies/:id', (req, res) => {
+  const { id } = req.params;
+
+  // Verificar se existe envios para este ateliê
+  db.get('SELECT COUNT(*) as count FROM envios WHERE atelie_id = ?', [id], (err, result) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+
+    if (result.count > 0) {
+      return res.status(400).json({ 
+        error: 'Não é possível excluir este ateliê pois existem envios registrados para ele' 
+      });
+    }
+
+    // Nenhum envio encontrado, pode excluir
+    db.run('DELETE FROM atelies WHERE id = ?', [id], function(err) {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+
+      if (this.changes === 0) {
+        return res.status(404).json({ error: 'Ateliê não encontrado' });
+      }
+
+      res.json({ deleted: true, id });
+    });
+  });
 });
 
 // Produtos
-app.get("/api/produtos", (req, res) => {
-  db.all("SELECT * FROM produtos", (err, rows) => {
+app.get('/api/produtos', (req, res) => {
+  db.all('SELECT * FROM produtos ORDER BY nome ASC', (err, rows) => {
     if (err) {
       res.status(500).json({ error: err.message });
       return;
@@ -98,28 +158,104 @@ app.get("/api/produtos", (req, res) => {
   });
 });
 
-app.post("/api/produtos", (req, res) => {
+app.post('/api/produtos', (req, res) => {
   const { nome, tempo_producao, referencia } = req.body;
-  db.run(
-    "INSERT INTO produtos (nome, referencia, tempo_producao) VALUES (?, ?, ?)",
-    [nome, referencia, tempo_producao],
-    function (err) {
+
+  if (!nome) {
+    return res.status(400).json({ error: 'Nome do produto é obrigatório' });
+  }
+
+  if (!tempo_producao || isNaN(tempo_producao)) {
+    return res.status(400).json({ error: 'Tempo de produção válido é obrigatório' });
+  }
+
+  db.run('INSERT INTO produtos (nome, referencia, tempo_producao) VALUES (?, ?, ?)', 
+    [nome, referencia, tempo_producao], 
+    function(err) {
       if (err) {
         res.status(500).json({ error: err.message });
         return;
       }
-      res.json({ id: this.lastID });
-    },
+      res.json({ id: this.lastID, nome, referencia, tempo_producao });
+    }
   );
 });
 
+app.put('/api/produtos/:id', (req, res) => {
+  const { id } = req.params;
+  const { nome, tempo_producao, referencia } = req.body;
+
+  if (!nome) {
+    return res.status(400).json({ error: 'Nome do produto é obrigatório' });
+  }
+
+  if (!tempo_producao || isNaN(tempo_producao)) {
+    return res.status(400).json({ error: 'Tempo de produção válido é obrigatório' });
+  }
+
+  db.run('UPDATE produtos SET nome = ?, referencia = ?, tempo_producao = ? WHERE id = ?',
+    [nome, referencia, tempo_producao, id],
+    function(err) {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+
+      if (this.changes === 0) {
+        res.status(404).json({ error: 'Produto não encontrado' });
+        return;
+      }
+
+      res.json({ id, nome, referencia, tempo_producao, updated: true });
+    }
+  );
+});
+
+app.delete('/api/produtos/:id', (req, res) => {
+  const { id } = req.params;
+
+  // Verificar se existe envios para este produto
+  db.get('SELECT COUNT(*) as count FROM envios WHERE produto_id = ?', [id], (err, result) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+
+    if (result.count > 0) {
+      return res.status(400).json({ 
+        error: 'Não é possível excluir este produto pois existem envios registrados para ele' 
+      });
+    }
+
+    // Nenhum envio encontrado, pode excluir
+    db.run('DELETE FROM produtos WHERE id = ?', [id], function(err) {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+
+      if (this.changes === 0) {
+        return res.status(404).json({ error: 'Produto não encontrado' });
+      }
+
+      res.json({ deleted: true, id });
+    });
+  });
+});
+
 // Envios
-app.get("/api/envios", (req, res) => {
+app.get('/api/envios', (req, res) => {
   const query = `
-    SELECT e.*, a.nome as atelie_nome, p.nome as produto_nome, p.referencia as produto_referencia
+    SELECT e.*, 
+           a.nome as atelie_nome, 
+           p.nome as produto_nome, 
+           p.referencia as produto_referencia,
+           CASE 
+             WHEN e.status = 'pendente' AND e.data_prevista_retorno < date('now') THEN 'atrasado' 
+             ELSE e.status 
+           END as situacao
     FROM envios e
     JOIN atelies a ON e.atelie_id = a.id
     JOIN produtos p ON e.produto_id = p.id
+    ORDER BY e.data_envio DESC
   `;
 
   db.all(query, (err, rows) => {
@@ -131,100 +267,138 @@ app.get("/api/envios", (req, res) => {
   });
 });
 
-app.post("/api/envios", (req, res) => {
+app.post('/api/envios', (req, res) => {
   const { atelie_id, produto_id, quantidade, data_envio } = req.body;
 
+  if (!atelie_id || !produto_id || !quantidade || !data_envio) {
+    return res.status(400).json({ error: 'Todos os campos são obrigatórios' });
+  }
+
   // Buscar o tempo de produção do produto
-  db.get(
-    "SELECT tempo_producao FROM produtos WHERE id = ?",
-    [produto_id],
-    (err, produto) => {
-      if (err || !produto) {
-        res
-          .status(500)
-          .json({ error: err ? err.message : "Produto não encontrado" });
-        return;
+  db.get('SELECT tempo_producao FROM produtos WHERE id = ?', [produto_id], (err, produto) => {
+    if (err || !produto) {
+      res.status(500).json({ error: err ? err.message : 'Produto não encontrado' });
+      return;
+    }
+
+    // Calcular data prevista de retorno
+    const horasNecessarias = quantidade * produto.tempo_producao;
+    const diasNecessarios = Math.ceil(horasNecessarias / 8); // 8 horas de trabalho por dia
+
+    const dataEnvio = moment(data_envio);
+    let dataPrevistaRetorno = dataEnvio.clone().add(diasNecessarios, 'days');
+
+    // Pular finais de semana
+    for (let i = 0; i < diasNecessarios; i++) {
+      const diaDaSemana = dataEnvio.clone().add(i, 'days').day();
+      if (diaDaSemana === 0 || diaDaSemana === 6) { // 0 = domingo, 6 = sábado
+        dataPrevistaRetorno.add(1, 'days');
       }
+    }
 
-      // Calcular data prevista de retorno
-      const horasNecessarias = quantidade / produto.tempo_producao;
-      const diasNecessarios = Math.ceil(horasNecessarias / 8); // 8 horas de trabalho por dia
+    const dataPrevistaRetornoStr = dataPrevistaRetorno.format('YYYY-MM-DD');
 
-      const dataEnvio = moment(data_envio);
-      const dataPrevistaRetorno = dataEnvio
-        .clone()
-        .add(diasNecessarios, "days")
-        .format("YYYY-MM-DD");
-
-      // Inserir o envio
-      db.run(
-        "INSERT INTO envios (atelie_id, produto_id, quantidade, data_envio, data_prevista_retorno) VALUES (?, ?, ?, ?, ?)",
-        [atelie_id, produto_id, quantidade, data_envio, dataPrevistaRetorno],
-        function (err) {
-          if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-          }
-          res.json({
-            id: this.lastID,
-            data_prevista_retorno: dataPrevistaRetorno,
-          });
-        },
-      );
-    },
-  );
+    // Inserir o envio
+    db.run(
+      'INSERT INTO envios (atelie_id, produto_id, quantidade, data_envio, data_prevista_retorno) VALUES (?, ?, ?, ?, ?)', 
+      [atelie_id, produto_id, quantidade, data_envio, dataPrevistaRetornoStr], 
+      function(err) {
+        if (err) {
+          res.status(500).json({ error: err.message });
+          return;
+        }
+        res.json({ 
+          id: this.lastID,
+          atelie_id,
+          produto_id,
+          quantidade,
+          data_envio,
+          data_prevista_retorno: dataPrevistaRetornoStr
+        });
+      }
+    );
+  });
 });
 
 // Registrar retorno
-app.put("/api/envios/:id/retorno", (req, res) => {
+app.put('/api/envios/:id/retorno', (req, res) => {
   const { id } = req.params;
   const { data_retorno, quantidade_retorno } = req.body;
 
-  // Verificar se temos a quantidade de retorno
-  const updateFields = ["data_retorno = ?", "status = ?"];
-  const updateValues = [data_retorno, "concluido"];
-
-  // Se tiver quantidade_retorno, adicionar ao update
-  if (quantidade_retorno) {
-    updateFields.push("quantidade_retorno = ?");
-    updateValues.push(quantidade_retorno);
+  if (!data_retorno) {
+    return res.status(400).json({ error: 'Data de retorno é obrigatória' });
   }
 
-  // Adicionar o id ao final dos valores
-  updateValues.push(id);
-
-  const query = `UPDATE envios SET ${updateFields.join(", ")} WHERE id = ?`;
-
-  db.run(query, updateValues, function (err) {
+  // Verificar se o envio existe
+  db.get('SELECT * FROM envios WHERE id = ?', [id], (err, envio) => {
     if (err) {
-      res.status(500).json({ error: err.message });
-      return;
+      return res.status(500).json({ error: err.message });
     }
 
-    if (this.changes === 0) {
-      res.status(404).json({ error: "Envio não encontrado" });
-      return;
+    if (!envio) {
+      return res.status(404).json({ error: 'Envio não encontrado' });
     }
 
-    res.json({ success: true });
+    // Se não foi informada a quantidade de retorno, usar a quantidade enviada
+    const qtdRetorno = quantidade_retorno || envio.quantidade;
+
+    // Verificar se a quantidade de retorno é válida
+    if (qtdRetorno > envio.quantidade) {
+      return res.status(400).json({ 
+        error: 'A quantidade de retorno não pode ser maior que a quantidade enviada' 
+      });
+    }
+
+    // Calcular o status baseado na quantidade retornada
+    let status = 'concluido';
+    if (qtdRetorno < envio.quantidade) {
+      status = 'retorno_parcial';
+    }
+
+    // Atualizar o envio
+    db.run(
+      'UPDATE envios SET data_retorno = ?, quantidade_retorno = ?, status = ? WHERE id = ?',
+      [data_retorno, qtdRetorno, status, id],
+      function(err) {
+        if (err) {
+          res.status(500).json({ error: err.message });
+          return;
+        }
+
+        res.json({ 
+          id,
+          data_retorno,
+          quantidade_retorno: qtdRetorno,
+          status,
+          success: true
+        });
+      }
+    );
   });
 });
 
 // Rota para obter envios pendentes (em atraso ou não)
-app.get("/api/envios/pendentes", (req, res) => {
-  const hoje = moment().format("YYYY-MM-DD");
+app.get('/api/envios/pendentes', (req, res) => {
+  const hoje = moment().format('YYYY-MM-DD');
 
   const query = `
-    SELECT e.*, a.nome as atelie_nome, p.nome as produto_nome, p.referencia as produto_referencia,
-           CASE WHEN e.data_prevista_retorno < ? THEN 'atrasado' ELSE 'dentro_prazo' END as situacao
+    SELECT e.*, 
+           a.nome as atelie_nome, 
+           p.nome as produto_nome, 
+           p.referencia as produto_referencia,
+           CASE 
+             WHEN e.data_prevista_retorno < ? THEN 'atrasado' 
+             ELSE 'dentro_prazo' 
+           END as situacao,
+           julianday(e.data_prevista_retorno) - julianday(?) as dias_restantes
     FROM envios e
     JOIN atelies a ON e.atelie_id = a.id
     JOIN produtos p ON e.produto_id = p.id
-    WHERE e.data_retorno IS NULL
+    WHERE e.status = 'pendente'
     ORDER BY e.data_prevista_retorno ASC
   `;
 
-  db.all(query, [hoje], (err, rows) => {
+  db.all(query, [hoje, hoje], (err, rows) => {
     if (err) {
       res.status(500).json({ error: err.message });
       return;
@@ -234,15 +408,19 @@ app.get("/api/envios/pendentes", (req, res) => {
 });
 
 // Rota para obter envios com previsão de retorno para hoje
-app.get("/api/envios/previstos-hoje", (req, res) => {
-  const hoje = moment().format("YYYY-MM-DD");
+app.get('/api/envios/previstos-hoje', (req, res) => {
+  const hoje = moment().format('YYYY-MM-DD');
 
   const query = `
-    SELECT e.*, a.nome as atelie_nome, p.nome as produto_nome, p.referencia as produto_referencia
+    SELECT e.*, 
+           a.nome as atelie_nome, 
+           a.contato as atelie_contato,
+           p.nome as produto_nome, 
+           p.referencia as produto_referencia
     FROM envios e
     JOIN atelies a ON e.atelie_id = a.id
     JOIN produtos p ON e.produto_id = p.id
-    WHERE e.data_prevista_retorno = ? AND e.data_retorno IS NULL
+    WHERE e.data_prevista_retorno = ? AND e.status = 'pendente'
     ORDER BY a.nome ASC
   `;
 
@@ -255,16 +433,46 @@ app.get("/api/envios/previstos-hoje", (req, res) => {
   });
 });
 
-// Rota para gerar relatório PDF
-app.get("/api/relatorios/retornos-hoje", (req, res) => {
-  const hoje = moment().format("YYYY-MM-DD");
+// Rota para gerar relatório de envios pendentes por ateliê
+app.get('/api/relatorios/pendentes-por-atelie', (req, res) => {
+  const query = `
+    SELECT a.nome as atelie_nome, 
+           COUNT(e.id) as total_pendentes,
+           SUM(CASE WHEN e.data_prevista_retorno < date('now') THEN 1 ELSE 0 END) as total_atrasados
+    FROM atelies a
+    LEFT JOIN envios e ON e.atelie_id = a.id AND e.status = 'pendente'
+    GROUP BY a.id
+    ORDER BY total_pendentes DESC
+  `;
+
+  db.all(query, (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+
+    res.json({
+      data: rows,
+      titulo: 'Relatório de Envios Pendentes por Ateliê',
+      gerado_em: moment().format('DD/MM/YYYY HH:mm:ss')
+    });
+  });
+});
+
+// Rota para gerar relatório de retornos previstos para hoje
+app.get('/api/relatorios/retornos-hoje', (req, res) => {
+  const hoje = moment().format('YYYY-MM-DD');
 
   const query = `
-    SELECT e.*, a.nome as atelie_nome, p.nome as produto_nome
+    SELECT e.*, 
+           a.nome as atelie_nome, 
+           a.contato as atelie_contato,
+           p.nome as produto_nome,
+           p.referencia as produto_referencia
     FROM envios e
     JOIN atelies a ON e.atelie_id = a.id
     JOIN produtos p ON e.produto_id = p.id
-    WHERE e.data_prevista_retorno = ? AND e.data_retorno IS NULL
+    WHERE e.data_prevista_retorno = ? AND e.status = 'pendente'
     ORDER BY a.nome ASC
   `;
 
@@ -278,45 +486,1732 @@ app.get("/api/relatorios/retornos-hoje", (req, res) => {
     // para que o frontend possa gerar o PDF usando uma biblioteca JS
     res.json({
       data: rows,
-      titulo: `Relatório de Retornos Previstos para ${moment(hoje).format("DD/MM/YYYY")}`,
-      gerado_em: moment().format("DD/MM/YYYY HH:mm:ss"),
+      titulo: `Relatório de Retornos Previstos para ${moment(hoje).format('DD/MM/YYYY')}`,
+      gerado_em: moment().format('DD/MM/YYYY HH:mm:ss')
     });
   });
 });
 
+// Rota para obter estatísticas
+app.get('/api/estatisticas', (req, res) => {
+  const promises = [
+    // Total de envios pendentes
+    new Promise((resolve, reject) => {
+      db.get('SELECT COUNT(*) as total FROM envios WHERE status = "pendente"', (err, row) => {
+        if (err) reject(err);
+        else resolve({ pendentes: row.total });
+      });
+    }),
+
+    // Total de envios atrasados
+    new Promise((resolve, reject) => {
+      db.get(
+        'SELECT COUNT(*) as total FROM envios WHERE status = "pendente" AND data_prevista_retorno < date("now")', 
+        (err, row) => {
+          if (err) reject(err);
+          else resolve({ atrasados: row.total });
+        }
+      );
+    }),
+
+    // Total previstos para hoje
+    new Promise((resolve, reject) => {
+      db.get(
+        'SELECT COUNT(*) as total FROM envios WHERE status = "pendente" AND data_prevista_retorno = date("now")', 
+        (err, row) => {
+          if (err) reject(err);
+          else resolve({ previstos_hoje: row.total });
+        }
+      );
+    }),
+
+    // Total de ateliês
+    new Promise((resolve, reject) => {
+      db.get('SELECT COUNT(*) as total FROM atelies', (err, row) => {
+        if (err) reject(err);
+        else resolve({ atelies: row.total });
+      });
+    }),
+
+    // Total de produtos
+    new Promise((resolve, reject) => {
+      db.get('SELECT COUNT(*) as total FROM produtos', (err, row) => {
+        if (err) reject(err);
+        else resolve({ produtos: row.total });
+      });
+    })
+  ];
+
+  Promise.all(promises)
+    .then(results => {
+      // Combinar todos os resultados em um único objeto
+      const estatisticas = Object.assign({}, ...results);
+      res.json(estatisticas);
+    })
+    .catch(err => {
+      res.status(500).json({ error: err.message });
+    });
+});
+
 // Rota para reconhecimento de produtos (simulada)
-app.post("/api/reconhecimento-produto", (req, res) => {
+app.post('/api/reconhecimento-produto', (req, res) => {
   // Em uma implementação real, isso processaria uma imagem
   // e usaria um modelo de ML para reconhecer o produto
 
   // Vamos simular um reconhecimento retornando um produto aleatório
-  db.all("SELECT * FROM produtos", (err, produtos) => {
+  db.all('SELECT * FROM produtos', (err, produtos) => {
     if (err || !produtos.length) {
-      res
-        .status(500)
-        .json({ error: err ? err.message : "Nenhum produto encontrado" });
+      res.status(500).json({ error: err ? err.message : 'Nenhum produto encontrado' });
       return;
     }
 
-    const produtoAleatorio =
-      produtos[Math.floor(Math.random() * produtos.length)];
+    const produtoAleatorio = produtos[Math.floor(Math.random() * produtos.length)];
 
     // Simular um atraso de processamento
     setTimeout(() => {
       res.json({
         success: true,
         produto: produtoAleatorio,
+        confianca: Math.floor(Math.random() * 30 + 70) // 70-100%
       });
     }, 1000);
   });
 });
 
+// Criar pasta public se não existir
+const fs = require('fs');
+if (!fs.existsSync(path.join(__dirname, 'public'))) {
+  fs.mkdirSync(path.join(__dirname, 'public'));
+}
+
+// Criar HTML básico para a interface
+fs.writeFileSync(
+  path.join(__dirname, 'public', 'index.html'),
+  `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistema de Gerenciamento de Ateliês</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="container-fluid">
+    <div class="row">
+      <!-- Sidebar -->
+      <nav id="sidebar" class="col-md-3 col-lg-2 d-md-block bg-light sidebar collapse">
+        <div class="position-sticky pt-3">
+          <ul class="nav flex-column">
+            <li class="nav-item">
+              <a class="nav-link active" href="#dashboard">
+                <i class="bi bi-speedometer2 me-2"></i>Dashboard
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#atelies">
+                <i class="bi bi-house-door me-2"></i>Ateliês
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#produtos">
+                <i class="bi bi-box me-2"></i>Produtos
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#envios">
+                <i class="bi bi-send me-2"></i>Envios
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#pendentes">
+                <i class="bi bi-hourglass-split me-2"></i>Pendentes
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#relatorios">
+                <i class="bi bi-file-earmark-text me-2"></i>Relatórios
+              </a>
+            </li>
+          </ul>
+        </div>
+      </nav>
+
+      <!-- Main content -->
+      <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4">
+        <div id="content-area">
+          <!-- Será preenchido dinamicamente com o conteúdo da seção selecionada -->
+          <div class="text-center mt-5">
+            <div class="spinner-border" role="status">
+              <span class="visually-hidden">Carregando...</span>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Modal para Ações -->
+  <div class="modal fade" id="appModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="modalTitle">Título</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+        </div>
+        <div class="modal-body" id="modalBody">
+          <!-- Conteúdo dinâmico -->
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="modalSaveBtn">Salvar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/moment/moment.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>`
+);
+
+// Criar CSS para a interface
+fs.writeFileSync(
+  path.join(__dirname, 'public', 'styles.css'),
+  `body {
+  font-size: .875rem;
+}
+
+.sidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 100;
+  padding: 48px 0 0;
+  box-shadow: inset -1px 0 0 rgba(0, 0, 0, .1);
+}
+
+.sidebar .nav-link {
+  font-weight: 500;
+  color: #333;
+}
+
+.sidebar .nav-link.active {
+  color: #007bff;
+}
+
+.sidebar-heading {
+  font-size: .75rem;
+  text-transform: uppercase;
+}
+
+.navbar-brand {
+  padding-top: .75rem;
+  padding-bottom: .75rem;
+  font-size: 1rem;
+  background-color: rgba(0, 0, 0, .25);
+  box-shadow: inset -1px 0 0 rgba(0, 0, 0, .25);
+}
+
+.card-dashboard {
+  border-left: 4px solid #007bff;
+  transition: transform 0.3s;
+}
+
+.card-dashboard:hover {
+  transform: translateY(-5px);
+}
+
+.card-dashboard.atrasados {
+  border-left-color: #dc3545;
+}
+
+.card-dashboard.pendentes {
+  border-left-color: #ffc107;
+}
+
+.card-dashboard.hoje {
+  border-left-color: #28a745;
+}
+
+.table-responsive {
+  margin-bottom: 1rem;
+}
+
+.status-badge {
+  padding: 5px 10px;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: bold;
+}
+
+.status-pendente {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+.status-atrasado {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.status-concluido {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.status-retorno_parcial {
+  background-color: #d1ecf1;
+  color: #0c5460;
+}
+
+.dentro_prazo {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.btn-action {
+  margin-right: 5px;
+}
+
+.btn-filter {
+  margin-bottom: 15px;
+}
+
+.form-group {
+  margin-bottom: 1rem;
+}
+
+@media (max-width: 767.98px) {
+  .sidebar {
+    position: static;
+    height: auto;
+    padding: 0;
+  }
+}`
+);
+
+// Criar JavaScript para a interface
+fs.writeFileSync(
+  path.join(__dirname, 'public', 'app.js'),
+  `document.addEventListener('DOMContentLoaded', function() {
+  // Estado global da aplicação
+  const appState = {
+    atelies: [],
+    produtos: [],
+    envios: [],
+    pendentes: [],
+    estatisticas: {},
+    currentSection: 'dashboard'
+  };
+
+  // Inicialização
+  init();
+
+  function init() {
+    // Carregar dados iniciais
+    loadEstimartivas();
+    loadAtelies();
+    loadProdutos();
+    loadEnvios();
+    loadPendentes();
+
+    // Inicializar navegação
+    setupNavigation();
+
+    // Carregar a primeira seção (dashboard)
+    loadSection('dashboard');
+  }
+
+  // Configuração da navegação
+  function setupNavigation() {
+    document.querySelectorAll('.nav-link').forEach(link => {
+      link.addEventListener('click', function(e) {
+        e.preventDefault();
+        const section = this.getAttribute('href').substring(1);
+
+        // Atualizar links ativos
+        document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active'));
+        this.classList.add('active');
+
+        // Carregar a seção clicada
+        loadSection(section);
+      });
+    });
+  }
+
+  // Função para carregar as estatísticas
+  async function loadEstimartivas() {
+    try {
+      const response = await fetch('/api/estatisticas');
+      if (!response.ok) throw new Error('Erro ao carregar estatísticas');
+
+      appState.estatisticas = await response.json();
+
+      // Se estivermos na seção dashboard, atualizar a visualização
+      if (appState.currentSection === 'dashboard') {
+        renderDashboard();
+      }
+    } catch (error) {
+      console.error('Erro ao carregar estatísticas:', error);
+      showAlert('Erro ao carregar estatísticas: ' + error.message, 'danger');
+    }
+  }
+
+  // Função para carregar ateliês
+  async function loadAtelies() {
+    try {
+      const response = await fetch('/api/atelies');
+      if (!response.ok) throw new Error('Erro ao carregar ateliês');
+
+      appState.atelies = await response.json();
+
+      // Se estivermos na seção ateliês, atualizar a visualização
+      if (appState.currentSection === 'atelies') {
+        renderAtelies();
+      }
+    } catch (error) {
+      console.error('Erro ao carregar ateliês:', error);
+      showAlert('Erro ao carregar ateliês: ' + error.message, 'danger');
+    }
+  }
+
+  // Função para carregar produtos
+  async function loadProdutos() {
+    try {
+      const response = await fetch('/api/produtos');
+      if (!response.ok) throw new Error('Erro ao carregar produtos');
+
+      appState.produtos = await response.json();
+
+      // Se estivermos na seção produtos, atualizar a visualização
+      if (appState.currentSection === 'produtos') {
+        renderProdutos();
+      }
+    } catch (error) {
+      console.error('Erro ao carregar produtos:', error);
+      showAlert('Erro ao carregar produtos: ' + error.message, 'danger');
+    }
+  }
+
+  // Função para carregar envios
+  async function loadEnvios() {
+    try {
+      const response = await fetch('/api/envios');
+      if (!response.ok) throw new Error('Erro ao carregar envios');
+
+      appState.envios = await response.json();
+
+      // Se estivermos na seção envios, atualizar a visualização
+      if (appState.currentSection === 'envios') {
+        renderEnvios();
+      }
+    } catch (error) {
+      console.error('Erro ao carregar envios:', error);
+      showAlert('Erro ao carregar envios: ' + error.message, 'danger');
+    }
+  }
+
+  // Função para carregar pendentes
+  async function loadPendentes() {
+    try {
+      const response = await fetch('/api/envios/pendentes');
+      if (!response.ok) throw new Error('Erro ao carregar pendentes');
+
+      appState.pendentes = await response.json();
+
+      // Se estivermos na seção pendentes, atualizar a visualização
+      if (appState.currentSection === 'pendentes') {
+        renderPendentes();
+      }
+    } catch (error) {
+      console.error('Erro ao carregar pendentes:', error);
+      showAlert('Erro ao carregar pendentes: ' + error.message, 'danger');
+    }
+  }
+
+  // Função para carregar uma seção específica
+  function loadSection(section) {
+    appState.currentSection = section;
+
+    // Renderizar a seção apropriada
+    switch (section) {
+      case 'dashboard':
+        renderDashboard();
+        break;
+      case 'atelies':
+        renderAtelies();
+        break;
+      case 'produtos':
+        renderProdutos();
+        break;
+      case 'envios':
+        renderEnvios();
+        break;
+      case 'pendentes':
+        renderPendentes();
+        break;
+      case 'relatorios':
+        renderRelatorios();
+        break;
+      default:
+        renderDashboard();
+    }
+  }
+
+  // Renderização do Dashboard
+  function renderDashboard() {
+    const contentArea = document.getElementById('content-area');
+
+    const { pendentes = 0, atrasados = 0, previstos_hoje = 0, atelies = 0, produtos = 0 } = appState.estatisticas;
+
+    contentArea.innerHTML = `
+      <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <h1 class="h2">Dashboard</h1>
+        <div class="btn-toolbar mb-2 mb-md-0">
+          <button type="button" class="btn btn-sm btn-outline-secondary" onclick="location.reload()">
+            <i class="bi bi-arrow-clockwise"></i> Atualizar
+          </button>
+        </div>
+      </div>
+
+      <div class="row mb-4">
+        <div class="col-md-3 mb-4">
+          <div class="card card-dashboard pendentes">
+            <div class="card-body">
+              <h5 class="card-title">Envios Pendentes</h5>
+              <h2 class="card-text">${pendentes}</h2>
+              <p class="card-text text-muted">Total de envios aguardando retorno</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3 mb-4">
+          <div class="card card-dashboard atrasados">
+            <div class="card-body">
+              <h5 class="card-title">Envios Atrasados</h5>
+              <h2 class="card-text">${atrasados}</h2>
+              <p class="card-text text-muted">Envios com retorno em atraso</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3 mb-4">
+          <div class="card card-dashboard hoje">
+            <div class="card-body">
+              <h5 class="card-title">Retornos Hoje</h5>
+              <h2 class="card-text">${previstos_hoje}</h2>
+              <p class="card-text text-muted">Previstos para retornar hoje</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3 mb-4">
+          <div class="card card-dashboard">
+            <div class="card-body">
+              <h5 class="card-title">Ateliês Cadastrados</h5>
+              <h2 class="card-text">${atelies}</h2>
+              <p class="card-text text-muted">Total de ateliês no sistema</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row mb-4">
+        <div class="col-md-6 mb-4">
+          <div class="card">
+            <div class="card-header bg-light">
+              <h5 class="card-title mb-0">Retornos Previstos Para Hoje</h5>
+            </div>
+            <div class="card-body">
+              <div id="retornos-hoje-container">
+                <div class="text-center my-3">
+                  <div class="spinner-border spinner-border-sm" role="status">
+                    <span class="visually-hidden">Carregando...</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6 mb-4">
+          <div class="card">
+            <div class="card-header bg-light">
+              <h5 class="card-title mb-0">Envios por Status</h5>
+            </div>
+            <div class="card-body">
+              <canvas id="statusChart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Carregar retornos previstos para hoje
+    loadRetornosHoje();
+
+    // Criar gráfico de status
+    createStatusChart();
+  }
+
+  // Carregar retornos previstos para hoje
+  async function loadRetornosHoje() {
+    try {
+      const response = await fetch('/api/envios/previstos-hoje');
+      if (!response.ok) throw new Error('Erro ao carregar retornos previstos');
+
+      const data = await response.json();
+      const container = document.getElementById('retornos-hoje-container');
+
+      if (data.length === 0) {
+        container.innerHTML = '<p class="text-muted text-center">Nenhum retorno previsto para hoje.</p>';
+        return;
+      }
+
+      let html = '<div class="table-responsive"><table class="table table-sm">';
+      html += '<thead><tr><th>Ateliê</th><th>Produto</th><th>Qtd</th><th>Ação</th></tr></thead>';
+      html += '<tbody>';
+
+      data.forEach(item => {
+        html += `
+          <tr>
+            <td>${item.atelie_nome}</td>
+            <td>${item.produto_nome}</td>
+            <td>${item.quantidade}</td>
+            <td>
+              <button class="btn btn-sm btn-success" onclick="registrarRetorno(${item.id})">
+                <i class="bi bi-check-circle"></i> Retornou
+              </button>
+            </td>
+          </tr>
+        `;
+      });
+
+      html += '</tbody></table></div>';
+      container.innerHTML = html;
+    } catch (error) {
+      console.error('Erro ao carregar retornos previstos:', error);
+      document.getElementById('retornos-hoje-container').innerHTML = 
+        '<p class="text-danger">Erro ao carregar dados: ' + error.message + '</p>';
+    }
+  }
+
+  // Criar gráfico de status de envios
+  function createStatusChart() {
+    const pendentes = appState.estatisticas.pendentes || 0;
+    const atrasados = appState.estatisticas.atrasados || 0;
+    const concluidos = (appState.envios.filter(e => e.status === 'concluido')).length;
+    const parciais = (appState.envios.filter(e => e.status === 'retorno_parcial')).length;
+
+    const ctx = document.getElementById('statusChart');
+
+    new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Pendentes', 'Atrasados', 'Concluídos', 'Retorno Parcial'],
+        datasets: [{
+          data: [pendentes - atrasados, atrasados, concluidos, parciais],
+          backgroundColor: [
+            '#ffc107',  // Amarelo para pendentes
+            '#dc3545',  // Vermelho para atrasados
+            '#28a745',  // Verde para concluídos
+            '#17a2b8'   // Azul para retorno parcial
+          ],
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+          }
+        }
+      }
+    });
+  }
+
+  // Renderização da seção de Ateliês
+  function renderAtelies() {
+    const contentArea = document.getElementById('content-area');
+
+    contentArea.innerHTML = `
+      <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <h1 class="h2">Ateliês</h1>
+        <div class="btn-toolbar mb-2 mb-md-0">
+          <button type="button" class="btn btn-sm btn-primary" onclick="showAtelieForm()">
+            <i class="bi bi-plus-circle"></i> Novo Ateliê
+          </button>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-striped table-hover">
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>Contato</th>
+              <th>Endereço</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody id="atelies-table-body">
+            <tr>
+              <td colspan="4" class="text-center">
+                <div class="spinner-border spinner-border-sm" role="status">
+                  <span class="visually-hidden">Carregando...</span>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    // Preencher a tabela com os dados dos ateliês
+    const tableBody = document.getElementById('atelies-table-body');
+
+    if (appState.atelies.length === 0) {
+      tableBody.innerHTML = '<tr><td colspan="4" class="text-center">Nenhum ateliê cadastrado.</td></tr>';
+      return;
+    }
+
+    let html = '';
+    appState.atelies.forEach(atelie => {
+      html += `
+        <tr>
+          <td>${atelie.nome}</td>
+          <td>${atelie.contato || '-'}</td>
+          <td>${atelie.endereco || '-'}</td>
+          <td>
+            <button class="btn btn-sm btn-primary btn-action" onclick="editAtelie(${atelie.id})">
+              <i class="bi bi-pencil"></i>
+            </button>
+            <button class="btn btn-sm btn-danger btn-action" onclick="deleteAtelie(${atelie.id})">
+              <i class="bi bi-trash"></i>
+            </button>
+          </td>
+        </tr>
+      `;
+    });
+
+    tableBody.innerHTML = html;
+
+    // Definir funções globais para o formulário de ateliê
+    window.showAtelieForm = function(atelieId = null) {
+      const atelie = atelieId ? appState.atelies.find(a => a.id === atelieId) : null;
+      const title = atelie ? 'Editar Ateliê' : 'Novo Ateliê';
+
+      const modalBody = document.getElementById('modalBody');
+      modalBody.innerHTML = `
+        <form id="atelieForm">
+          <input type="hidden" id="atelieId" value="${atelie ? atelie.id : ''}">
+          <div class="form-group">
+            <label for="nome">Nome*</label>
+            <input type="text" class="form-control" id="nome" required value="${atelie ? atelie.nome : ''}">
+          </div>
+          <div class="form-group">
+            <label for="contato">Contato</label>
+            <input type="text" class="form-control" id="contato" value="${atelie && atelie.contato ? atelie.contato : ''}">
+          </div>
+          <div class="form-group">
+            <label for="endereco">Endereço</label>
+            <input type="text" class="form-control" id="endereco" value="${atelie && atelie.endereco ? atelie.endereco : ''}">
+          </div>
+        </form>
+      `;
+
+      document.getElementById('modalTitle').textContent = title;
+
+      const modal = new bootstrap.Modal(document.getElementById('appModal'));
+      modal.show();
+
+      document.getElementById('modalSaveBtn').onclick = saveAtelie;
+    };
+
+    window.editAtelie = function(id) {
+      showAtelieForm(id);
+    };
+
+    window.deleteAtelie = function(id) {
+      if (confirm('Tem certeza que deseja excluir este ateliê?')) {
+        fetch(`/api/atelies/${id}`, {
+          method: 'DELETE',
+        })
+        .then(response => {
+          if (!response.ok) {
+            return response.json().then(err => { throw new Error(err.error || 'Erro ao excluir ateliê'); });
+          }
+          return response.json();
+        })
+        .then(data => {
+          showAlert('Ateliê excluído com sucesso!', 'success');
+          loadAtelies();
+        })
+        .catch(error => {
+          console.error('Erro ao excluir ateliê:', error);
+          showAlert(error.message, 'danger');
+        });
+      }
+    };
+
+    window.saveAtelie = function() {
+      const id = document.getElementById('atelieId').value;
+      const nome = document.getElementById('nome').value;
+      const contato = document.getElementById('contato').value;
+      const endereco = document.getElementById('endereco').value;
+
+      if (!nome) {
+        showAlert('Nome do ateliê é obrigatório', 'danger');
+        return;
+      }
+
+      const data = { nome, contato, endereco };
+      const method = id ? 'PUT' : 'POST';
+      const url = id ? `/api/atelies/${id}` : '/api/atelies';
+
+      fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      })
+      .then(response => {
+        if (!response.ok) {
+          return response.json().then(err => { throw new Error(err.error || 'Erro ao salvar ateliê'); });
+        }
+        return response.json();
+      })
+      .then(data => {
+        showAlert(`Ateliê ${id ? 'atualizado' : 'cadastrado'} com sucesso!`, 'success');
+        bootstrap.Modal.getInstance(document.getElementById('appModal')).hide();
+        loadAtelies();
+      })
+      .catch(error => {
+        console.error('Erro ao salvar ateliê:', error);
+        showAlert(error.message, 'danger');
+      });
+    };
+  }
+
+  // Renderização da seção de Produtos
+  function renderProdutos() {
+    const contentArea = document.getElementById('content-area');
+
+    contentArea.innerHTML = `
+      <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <h1 class="h2">Produtos</h1>
+        <div class="btn-toolbar mb-2 mb-md-0">
+          <button type="button" class="btn btn-sm btn-primary" onclick="showProdutoForm()">
+            <i class="bi bi-plus-circle"></i> Novo Produto
+          </button>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-striped table-hover">
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>Referência</th>
+              <th>Tempo de Produção (h)</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody id="produtos-table-body">
+            <tr>
+              <td colspan="4" class="text-center">
+                <div class="spinner-border spinner-border-sm" role="status">
+                  <span class="visually-hidden">Carregando...</span>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    // Preencher a tabela com os dados dos produtos
+    const tableBody = document.getElementById('produtos-table-body');
+
+    if (appState.produtos.length === 0) {
+      tableBody.innerHTML = '<tr><td colspan="4" class="text-center">Nenhum produto cadastrado.</td></tr>';
+      return;
+    }
+
+    let html = '';
+    appState.produtos.forEach(produto => {
+      html += `
+        <tr>
+          <td>${produto.nome}</td>
+          <td>${produto.referencia || '-'}</td>
+          <td>${produto.tempo_producao}</td>
+          <td>
+            <button class="btn btn-sm btn-primary btn-action" onclick="editProduto(${produto.id})">
+              <i class="bi bi-pencil"></i>
+            </button>
+            <button class="btn btn-sm btn-danger btn-action" onclick="deleteProduto(${produto.id})">
+              <i class="bi bi-trash"></i>
+            </button>
+          </td>
+        </tr>
+      `;
+    });
+
+    tableBody.innerHTML = html;
+
+    // Definir funções globais para o formulário de produto
+    window.showProdutoForm = function(produtoId = null) {
+      const produto = produtoId ? appState.produtos.find(p => p.id === produtoId) : null;
+      const title = produto ? 'Editar Produto' : 'Novo Produto';
+
+      const modalBody = document.getElementById('modalBody');
+      modalBody.innerHTML = `
+        <form id="produtoForm">
+          <input type="hidden" id="produtoId" value="${produto ? produto.id : ''}">
+          <div class="form-group">
+            <label for="nome">Nome*</label>
+            <input type="text" class="form-control" id="nome" required value="${produto ? produto.nome : ''}">
+          </div>
+          <div class="form-group">
+            <label for="referencia">Referência</label>
+            <input type="text" class="form-control" id="referencia" value="${produto && produto.referencia ? produto.referencia : ''}">
+          </div>
+          <div class="form-group">
+            <label for="tempo_producao">Tempo de Produção (h)*</label>
+            <input type="number" step="0.1" min="0.1" class="form-control" id="tempo_producao" required value="${produto ? produto.tempo_producao : '1'}">
+            <small class="text-muted">Tempo necessário para produzir uma unidade (em horas)</small>
+          </div>
+        </form>
+      `;
+
+      document.getElementById('modalTitle').textContent = title;
+
+      const modal = new bootstrap.Modal(document.getElementById('appModal'));
+      modal.show();
+
+      document.getElementById('modalSaveBtn').onclick = saveProduto;
+    };
+
+    window.editProduto = function(id) {
+      showProdutoForm(id);
+    };
+
+    window.deleteProduto = function(id) {
+      if (confirm('Tem certeza que deseja excluir este produto?')) {
+        fetch(`/api/produtos/${id}`, {
+          method: 'DELETE',
+        })
+        .then(response => {
+          if (!response.ok) {
+            return response.json().then(err => { throw new Error(err.error || 'Erro ao excluir produto'); });
+          }
+          return response.json();
+        })
+        .then(data => {
+          showAlert('Produto excluído com sucesso!', 'success');
+          loadProdutos();
+        })
+        .catch(error => {
+          console.error('Erro ao excluir produto:', error);
+          showAlert(error.message, 'danger');
+        });
+      }
+    };
+
+    window.saveProduto = function() {
+      const id = document.getElementById('produtoId').value;
+      const nome = document.getElementById('nome').value;
+      const referencia = document.getElementById('referencia').value;
+      const tempo_producao = document.getElementById('tempo_producao').value;
+
+      if (!nome) {
+        showAlert('Nome do produto é obrigatório', 'danger');
+        return;
+      }
+
+      if (!tempo_producao || isNaN(tempo_producao) || Number(tempo_producao) <= 0) {
+        showAlert('Tempo de produção deve ser um número positivo', 'danger');
+        return;
+      }
+
+      const data = { nome, referencia, tempo_producao };
+      const method = id ? 'PUT' : 'POST';
+      const url = id ? `/api/produtos/${id}` : '/api/produtos';
+
+      fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      })
+      .then(response => {
+        if (!response.ok) {
+          return response.json().then(err => { throw new Error(err.error || 'Erro ao salvar produto'); });
+        }
+        return response.json();
+      })
+      .then(data => {
+        showAlert(`Produto ${id ? 'atualizado' : 'cadastrado'} com sucesso!`, 'success');
+        bootstrap.Modal.getInstance(document.getElementById('appModal')).hide();
+        loadProdutos();
+      })
+      .catch(error => {
+        console.error('Erro ao salvar produto:', error);
+        showAlert(error.message, 'danger');
+      });
+    };
+  }
+
+  // Renderização da seção de Envios
+  function renderEnvios() {
+    const contentArea = document.getElementById('content-area');
+
+    contentArea.innerHTML = `
+      <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <h1 class="h2">Envios</h1>
+        <div class="btn-toolbar mb-2 mb-md-0">
+          <button type="button" class="btn btn-sm btn-primary" onclick="showEnvioForm()">
+            <i class="bi bi-plus-circle"></i> Novo Envio
+          </button>
+        </div>
+      </div>
+
+      <div class="mb-3">
+        <div class="btn-group btn-filter">
+          <button type="button" class="btn btn-outline-secondary" onclick="filterEnvios('todos')">Todos</button>
+          <button type="button" class="btn btn-outline-secondary" onclick="filterEnvios('pendentes')">Pendentes</button>
+          <button type="button" class="btn btn-outline-secondary" onclick="filterEnvios('atrasados')">Atrasados</button>
+          <button type="button" class="btn btn-outline-secondary" onclick="filterEnvios('concluidos')">Concluídos</button>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-striped table-hover">
+          <thead>
+            <tr>
+              <th>Ateliê</th>
+              <th>Produto</th>
+              <th>Qtd</th>
+              <th>Envio</th>
+              <th>Prev. Retorno</th>
+              <th>Retorno</th>
+              <th>Status</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody id="envios-table-body">
+            <tr>
+              <td colspan="8" class="text-center">
+                <div class="spinner-border spinner-border-sm" role="status">
+                  <span class="visually-hidden">Carregando...</span>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    // Funções para filtrar envios
+    window.filterEnvios = function(filter) {
+      renderEnviosTable(filter);
+
+      // Atualizar a aparência dos botões de filtro
+      document.querySelectorAll('.btn-filter .btn').forEach(btn => {
+        btn.classList.remove('active');
+      });
+      document.querySelector(`.btn-filter .btn[onclick="filterEnvios('${filter}')"]`).classList.add('active');
+    };
+
+    // Função para renderizar a tabela de envios com filtro
+    function renderEnviosTable(filter = 'todos') {
+      const tableBody = document.getElementById('envios-table-body');
+
+      if (appState.envios.length === 0) {
+        tableBody.innerHTML = '<tr><td colspan="8" class="text-center">Nenhum envio registrado.</td></tr>';
+        return;
+      }
+
+      // Aplicar filtro
+      let filteredEnvios = appState.envios;
+      if (filter === 'pendentes') {
+        filteredEnvios = appState.envios.filter(e => e.status === 'pendente' && e.situacao !== 'atrasado');
+      } else if (filter === 'atrasados') {
+        filteredEnvios = appState.envios.filter(e => e.situacao === 'atrasado');
+      } else if (filter === 'concluidos') {
+        filteredEnvios = appState.envios.filter(e => e.status === 'concluido' || e.status === 'retorno_parcial');
+      }
+
+      if (filteredEnvios.length === 0) {
+        tableBody.innerHTML = `<tr><td colspan="8" class="text-center">Nenhum envio encontrado para o filtro "${filter}".</td></tr>`;
+        return;
+      }
+
+      let html = '';
+      filteredEnvios.forEach(envio => {
+        // Determinar o status para exibição
+        let statusClass = '';
+        let statusText = '';
+
+        if (envio.situacao === 'atrasado') {
+          statusClass = 'status-atrasado';
+          statusText = 'Atrasado';
+        } else if (envio.status === 'pendente') {
+          statusClass = 'status-pendente';
+          statusText = 'Pendente';
+        } else if (envio.status === 'concluido') {
+          statusClass = 'status-concluido';
+          statusText = 'Concluído';
+        } else if (envio.status === 'retorno_parcial') {
+          statusClass = 'status-retorno_parcial';
+          statusText = 'Retorno Parcial';
+        }
+
+        html += `
+          <tr>
+            <td>${envio.atelie_nome}</td>
+            <td>${envio.produto_nome}</td>
+            <td>${envio.quantidade}</td>
+            <td>${formatDate(envio.data_envio)}</td>
+            <td>${formatDate(envio.data_prevista_retorno)}</td>
+            <td>${envio.data_retorno ? formatDate(envio.data_retorno) : '-'}</td>
+            <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+            <td>
+              ${
+                envio.status === 'pendente' 
+                ? `
+                  <button class="btn btn-sm btn-success btn-action" onclick="registrarRetorno(${envio.id})">
+                    <i class="bi bi-check-circle"></i>
+                  </button>
+                ` 
+                : ''
+              }
+              <button class="btn btn-sm btn-info btn-action" onclick="viewEnvioDetails(${envio.id})">
+                <i class="bi bi-eye"></i>
+              </button>
+            </td>
+          </tr>
+        `;
+      });
+
+      tableBody.innerHTML = html;
+    }
+
+    // Carregar os envios inicialmente
+    renderEnviosTable('todos');
+
+    // Definir funções globais para os envios
+    window.showEnvioForm = function() {
+      // Verificar se temos ateliês e produtos cadastrados
+      if (appState.atelies.length === 0 || appState.produtos.length === 0) {
+        showAlert('É necessário cadastrar pelo menos um ateliê e um produto antes de registrar um envio.', 'warning');
+        return;
+      }
+
+      const hoje = new Date().toISOString().split('T')[0];
+
+      const modalBody = document.getElementById('modalBody');
+      modalBody.innerHTML = `
+        <form id="envioForm">
+          <div class="form-group">
+            <label for="atelie_id">Ateliê*</label>
+            <select class="form-select" id="atelie_id" required>
+              <option value="">Selecione um ateliê</option>
+              ${
+                appState.atelies.map(atelie => `
+                  <option value="${atelie.id}">${atelie.nome}</option>
+                `).join('')
+              }
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="produto_id">Produto*</label>
+            <select class="form-select" id="produto_id" required>
+              <option value="">Selecione um produto</option>
+              ${
+                appState.produtos.map(produto => `
+                  <option value="${produto.id}">${produto.nome} ${produto.referencia ? '(' + produto.referencia + ')' : ''}</option>
+                `).join('')
+              }
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="quantidade">Quantidade*</label>
+            <input type="number" min="1" class="form-control" id="quantidade" required value="1">
+          </div>
+          <div class="form-group">
+            <label for="data_envio">Data de Envio*</label>
+            <input type="date" class="form-control" id="data_envio" required value="${hoje}">
+          </div>
+          <div class="form-text text-muted mt-3 mb-0">
+            A data prevista de retorno será calculada automaticamente com base no tempo de produção do produto e na quantidade enviada.
+          </div>
+        </form>
+      `;
+
+      document.getElementById('modalTitle').textContent = 'Novo Envio';
+
+      const modal = new bootstrap.Modal(document.getElementById('appModal'));
+      modal.show();
+
+      document.getElementById('modalSaveBtn').onclick = saveEnvio;
+    };
+
+    window.saveEnvio = function() {
+      const atelie_id = document.getElementById('atelie_id').value;
+      const produto_id = document.getElementById('produto_id').value;
+      const quantidade = document.getElementById('quantidade').value;
+      const data_envio = document.getElementById('data_envio').value;
+
+      if (!atelie_id || !produto_id || !quantidade || !data_envio) {
+        showAlert('Todos os campos são obrigatórios', 'danger');
+        return;
+      }
+
+      if (parseInt(quantidade) <= 0) {
+        showAlert('A quantidade deve ser maior que zero', 'danger');
+        return;
+      }
+
+      const data = { 
+        atelie_id: parseInt(atelie_id),
+        produto_id: parseInt(produto_id),
+        quantidade: parseInt(quantidade),
+        data_envio
+      };
+
+      fetch('/api/envios', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      })
+      .then(response => {
+        if (!response.ok) {
+          return response.json().then(err => { throw new Error(err.error || 'Erro ao registrar envio'); });
+        }
+        return response.json();
+      })
+      .then(data => {
+        showAlert('Envio registrado com sucesso!', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('appModal')).hide();
+        loadEnvios();
+        loadPendentes();
+        loadEstimartivas();
+      })
+      .catch(error => {
+        console.error('Erro ao registrar envio:', error);
+        showAlert(error.message, 'danger');
+      });
+    };
+
+    window.registrarRetorno = function(id) {
+      const envio = appState.envios.find(e => e.id === id);
+      if (!envio) {
+        showAlert('Envio não encontrado', 'danger');
+        return;
+      }
+
+      const hoje = new Date().toISOString().split('T')[0];
+
+      const modalBody = document.getElementById('modalBody');
+      modalBody.innerHTML = `
+        <form id="retornoForm">
+          <input type="hidden" id="envioId" value="${id}">
+          <div class="mb-3">
+            <p><strong>Ateliê:</strong> ${envio.atelie_nome}</p>
+            <p><strong>Produto:</strong> ${envio.produto_nome} ${envio.produto_referencia ? '(' + envio.produto_referencia + ')' : ''}</p>
+            <p><strong>Quantidade Enviada:</strong> ${envio.quantidade}</p>
+            <p><strong>Data Prevista:</strong> ${formatDate(envio.data_prevista_retorno)}</p>
+          </div>
+          <div class="form-group">
+            <label for="data_retorno">Data de Retorno*</label>
+            <input type="date" class="form-control" id="data_retorno" required value="${hoje}">
+          </div>
+          <div class="form-group">
+            <label for="quantidade_retorno">Quantidade Retornada</label>
+            <input type="number" min="1" max="${envio.quantidade}" class="form-control" id="quantidade_retorno" value="${envio.quantidade}">
+            <small class="text-muted">Se não informado, será considerada a quantidade total</small>
+          </div>
+        </form>
+      `;
+
+      document.getElementById('modalTitle').textContent = 'Registrar Retorno';
+
+      const modal = new bootstrap.Modal(document.getElementById('appModal'));
+      modal.show();
+
+      document.getElementById('modalSaveBtn').onclick = saveRetorno;
+    };
+
+    window.saveRetorno = function() {
+      const id = document.getElementById('envioId').value;
+      const data_retorno = document.getElementById('data_retorno').value;
+      const quantidade_retorno = document.getElementById('quantidade_retorno').value;
+
+      if (!data_retorno) {
+        showAlert('Data de retorno é obrigatória', 'danger');
+        return;
+      }
+
+      const data = { 
+        data_retorno,
+        quantidade_retorno: quantidade_retorno ? parseInt(quantidade_retorno) : null
+      };
+
+      fetch(`/api/envios/${id}/retorno`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      })
+      .then(response=> {
+        if (!response.ok) {
+          return response.json().then(err => { throw new Error(err.error || 'Erro ao registrar retorno'); });
+        }
+        return response.json();
+      })
+      .then(data => {
+        showAlert('Retorno registrado com sucesso!', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('appModal')).hide();
+        loadEnvios();
+        loadPendentes();
+        loadEstimartivas();
+
+        // Se estamos na página dashboard, atualizar os retornos de hoje
+        if (appState.currentSection === 'dashboard') {
+          loadRetornosHoje();
+        }
+      })
+      .catch(error => {
+        console.error('Erro ao registrar retorno:', error);
+        showAlert(error.message, 'danger');
+      });
+    };
+
+    window.viewEnvioDetails = function(id) {
+      const envio = appState.envios.find(e => e.id === id);
+      if (!envio) {
+        showAlert('Envio não encontrado', 'danger');
+        return;
+      }
+
+      // Determinar o status para exibição
+      let statusClass = '';
+      let statusText = '';
+
+      if (envio.situacao === 'atrasado') {
+        statusClass = 'status-atrasado';
+        statusText = 'Atrasado';
+      } else if (envio.status === 'pendente') {
+        statusClass = 'status-pendente';
+        statusText = 'Pendente';
+      } else if (envio.status === 'concluido') {
+        statusClass = 'status-concluido';
+        statusText = 'Concluído';
+      } else if (envio.status === 'retorno_parcial') {
+        statusClass = 'status-retorno_parcial';
+        statusText = 'Retorno Parcial';
+      }
+
+      const modalBody = document.getElementById('modalBody');
+      modalBody.innerHTML = `
+        <div class="card">
+          <div class="card-header bg-light">
+            <h5 class="card-title mb-0">Detalhes do Envio</h5>
+          </div>
+          <div class="card-body">
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <p><strong>Ateliê:</strong> ${envio.atelie_nome}</p>
+                <p><strong>Produto:</strong> ${envio.produto_nome}</p>
+                <p><strong>Referência:</strong> ${envio.produto_referencia || '-'}</p>
+                <p><strong>Quantidade:</strong> ${envio.quantidade}</p>
+              </div>
+              <div class="col-md-6">
+                <p><strong>Status:</strong> <span class="status-badge ${statusClass}">${statusText}</span></p>
+                <p><strong>Data de Envio:</strong> ${formatDate(envio.data_envio)}</p>
+                <p><strong>Previsão de Retorno:</strong> ${formatDate(envio.data_prevista_retorno)}</p>
+                <p><strong>Data de Retorno:</strong> ${envio.data_retorno ? formatDate(envio.data_retorno) : '-'}</p>
+                ${
+                  envio.status === 'retorno_parcial' 
+                  ? `<p><strong>Quantidade Retornada:</strong> ${envio.quantidade_retorno} / ${envio.quantidade}</p>` 
+                  : ''
+                }
+              </div>
+            </div>
+            ${
+              envio.status === 'pendente' 
+              ? `
+                <div class="d-grid gap-2">
+                  <button class="btn btn-success" onclick="registrarRetorno(${envio.id})">
+                    <i class="bi bi-check-circle me-2"></i> Registrar Retorno
+                  </button>
+                </div>
+              ` 
+              : ''
+            }
+          </div>
+        </div>
+      `;
+
+      document.getElementById('modalTitle').textContent = 'Detalhes do Envio';
+      document.getElementById('modalSaveBtn').style.display = 'none';
+
+      const modal = new bootstrap.Modal(document.getElementById('appModal'));
+      modal.show();
+
+      // Quando o modal é fechado, restaurar o botão de salvar
+      document.getElementById('appModal').addEventListener('hidden.bs.modal', function () {
+        document.getElementById('modalSaveBtn').style.display = 'block';
+      }, { once: true });
+    };
+  }
+
+  // Renderização da seção de Pendentes
+  function renderPendentes() {
+    const contentArea = document.getElementById('content-area');
+
+    contentArea.innerHTML = `
+      <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <h1 class="h2">Envios Pendentes</h1>
+        <div class="btn-toolbar mb-2 mb-md-0">
+          <button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadPendentes()">
+            <i class="bi bi-arrow-clockwise"></i> Atualizar
+          </button>
+        </div>
+      </div>
+
+      <div class="mb-3">
+        <div class="btn-group btn-filter">
+          <button type="button" class="btn btn-outline-secondary active" onclick="filterPendentes('todos')">Todos</button>
+          <button type="button" class="btn btn-outline-secondary" onclick="filterPendentes('atrasados')">Atrasados</button>
+          <button type="button" class="btn btn-outline-secondary" onclick="filterPendentes('hoje')">Retorno Hoje</button>
+          <button type="button" class="btn btn-outline-secondary" onclick="filterPendentes('semana')">Esta Semana</button>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-striped table-hover">
+          <thead>
+            <tr>
+              <th>Ateliê</th>
+              <th>Produto</th>
+              <th>Qtd</th>
+              <th>Envio</th>
+              <th>Prev. Retorno</th>
+              <th>Situação</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody id="pendentes-table-body">
+            <tr>
+              <td colspan="7" class="text-center">
+                <div class="spinner-border spinner-border-sm" role="status">
+                  <span class="visually-hidden">Carregando...</span>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    // Funções para filtrar pendentes
+    window.filterPendentes = function(filter) {
+      renderPendentesTable(filter);
+
+      // Atualizar a aparência dos botões de filtro
+      document.querySelectorAll('.btn-filter .btn').forEach(btn => {
+        btn.classList.remove('active');
+      });
+      document.querySelector(`.btn-filter .btn[onclick="filterPendentes('${filter}')"]`).classList.add('active');
+    };
+
+    // Função para renderizar a tabela de pendentes com filtro
+    function renderPendentesTable(filter = 'todos') {
+      const tableBody = document.getElementById('pendentes-table-body');
+
+      if (appState.pendentes.length === 0) {
+        tableBody.innerHTML = '<tr><td colspan="7" class="text-center">Nenhum envio pendente.</td></tr>';
+        return;
+      }
+
+      // Aplicar filtro
+      let filteredPendentes = appState.pendentes;
+      const hoje = new Date();
+      hoje.setHours(0, 0, 0, 0);
+
+      if (filter === 'atrasados') {
+        filteredPendentes = appState.pendentes.filter(p => p.situacao === 'atrasado');
+      } else if (filter === 'hoje') {
+        const dataHoje = hoje.toISOString().split('T')[0];
+        filteredPendentes = appState.pendentes.filter(p => p.data_prevista_retorno === dataHoje);
+      } else if (filter === 'semana') {
+        const dataLimite = new Date(hoje);
+        dataLimite.setDate(dataLimite.getDate() + 7);
+
+        filteredPendentes = appState.pendentes.filter(p => {
+          const dataPrevista = new Date(p.data_prevista_retorno);
+          return dataPrevista >= hoje && dataPrevista <= dataLimite;
+        });
+      }
+
+      if (filteredPendentes.length === 0) {
+        tableBody.innerHTML = `<tr><td colspan="7" class="text-center">Nenhum envio encontrado para o filtro "${filter}".</td></tr>`;
+        return;
+      }
+
+      let html = '';
+      filteredPendentes.forEach(envio => {
+        // Determinar a situação para exibição
+        let situacaoClass = '';
+        let situacaoText = '';
+        let diasRestantes = '';
+
+        if (envio.situacao === 'atrasado') {
+          situacaoClass = 'status-atrasado';
+          situacaoText = 'Atrasado';
+          diasRestantes = `${Math.abs(Math.ceil(envio.dias_restantes))} dias atrás`;
+        } else {
+          situacaoClass = 'dentro_prazo';
+          situacaoText = 'No Prazo';
+
+          if (Math.ceil(envio.dias_restantes) === 0) {
+            diasRestantes = 'Hoje';
+          } else if (Math.ceil(envio.dias_restantes) === 1) {
+            diasRestantes = 'Amanhã';
+          } else {
+            diasRestantes = `Em ${Math.ceil(envio.dias_restantes)} dias`;
+          }
+        }
+
+        html += `
+          <tr>
+            <td>${envio.atelie_nome}</td>
+            <td>${envio.produto_nome}</td>
+            <td>${envio.quantidade}</td>
+            <td>${formatDate(envio.data_envio)}</td>
+            <td>${formatDate(envio.data_prevista_retorno)}</td>
+            <td>
+              <span class="status-badge ${situacaoClass}">
+                ${situacaoText}<br>
+                <small>${diasRestantes}</small>
+              </span>
+            </td>
+            <td>
+              <button class="btn btn-sm btn-success btn-action" onclick="registrarRetorno(${envio.id})">
+                <i class="bi bi-check-circle"></i> Retornou
+              </button>
+            </td>
+          </tr>
+        `;
+      });
+
+      tableBody.innerHTML = html;
+    }
+
+    // Carregar os pendentes inicialmente
+    renderPendentesTable('todos');
+  }
+
+  // Renderização da seção de Relatórios
+  function renderRelatorios() {
+    const contentArea = document.getElementById('content-area');
+
+    contentArea.innerHTML = `
+      <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <h1 class="h2">Relatórios</h1>
+      </div>
+
+      <div class="row">
+        <div class="col-md-6 mb-4">
+          <div class="card">
+            <div class="card-header">
+              <h5 class="card-title mb-0">Relatório de Pendências por Ateliê</h5>
+            </div>
+            <div class="card-body">
+              <p class="card-text">Mostra o total de envios pendentes e atrasados para cada ateliê.</p>
+              <button class="btn btn-primary" onclick="gerarRelatorioPendenciasPorAtelie()">
+                <i class="bi bi-file-earmark-text me-2"></i> Gerar Relatório
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-md-6 mb-4">
+          <div class="card">
+            <div class="card-header">
+              <h5 class="card-title mb-0">Relatório de Retornos Previstos para Hoje</h5>
+            </div>
+            <div class="card-body">
+              <p class="card-text">Lista todos os envios com previsão de retorno para hoje.</p>
+              <button class="btn btn-primary" onclick="gerarRelatorioRetornosHoje()">
+                <i class="bi bi-file-earmark-text me-2"></i> Gerar Relatório
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Definir funções para gerar relatórios
+    window.gerarRelatorioPendenciasPorAtelie = async function() {
+      try {
+        const response = await fetch('/api/relatorios/pendentes-por-atelie');
+        if (!response.ok) throw new Error('Erro ao gerar relatório');
+
+        const data = await response.json();
+        gerarPDF(data, 'pendencias_por_atelie');
+      } catch (error) {
+        console.error('Erro ao gerar relatório:', error);
+        showAlert('Erro ao gerar relatório: ' + error.message, 'danger');
+      }
+    };
+
+    window.gerarRelatorioRetornosHoje = async function() {
+      try {
+        const response = await fetch('/api/relatorios/retornos-hoje');
+        if (!response.ok) throw new Error('Erro ao gerar relatório');
+
+        const data = await response.json();
+        gerarPDF(data, 'retornos_hoje');
+      } catch (error) {
+        console.error('Erro ao gerar relatório:', error);
+        showAlert('Erro ao gerar relatório: ' + error.message, 'danger');
+      }
+    };
+
+    // Função para gerar PDF
+    function gerarPDF(data, tipo) {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+
+      // Configurar cabeçalho
+      doc.setFontSize(18);
+      doc.text(data.titulo, 14, 20);
+
+      doc.setFontSize(10);
+      doc.text(`Gerado em: ${data.gerado_em}`, 14, 30);
+
+      if (data.data.length === 0) {
+        doc.setFontSize(12);
+        doc.text('Nenhum dado encontrado para o relatório.', 14, 50);
+      } else {
+        // Configurar tabela
+        if (tipo === 'pendencias_por_atelie') {
+          // Cabeçalhos e dados para relatório de pendências por ateliê
+          const headers = [['Ateliê', 'Total Pendentes', 'Total Atrasados']];
+          const rows = data.data.map(item => [
+            item.atelie_nome, 
+            item.total_pendentes || '0', 
+            item.total_atrasados || '0'
+          ]);
+
+          doc.autoTable({
+            head: headers,
+            body: rows,
+            startY: 40,
+            theme: 'grid',
+            styles: { fontSize: 10 },
+            headerStyles: { 
+              fillColor: [100, 100, 100],
+              textColor: [255, 255, 255],
+              fontStyle: 'bold'
+            }
+          });
+        } else if (tipo === 'retornos_hoje') {
+          // Cabeçalhos e dados para relatório de retornos previstos para hoje
+          const headers = [['Ateliê', 'Contato', 'Produto', 'Qtd', 'Data Envio', 'Prev. Retorno']];
+          const rows = data.data.map(item => [
+            item.atelie_nome,
+            item.atelie_contato || '-',
+            item.produto_nome,
+            item.quantidade,
+            formatDate(item.data_envio),
+            formatDate(item.data_prevista_retorno)
+          ]);
+
+          doc.autoTable({
+            head: headers,
+            body: rows,
+            startY: 40,
+            theme: 'grid',
+            styles: { fontSize: 9 },
+            headerStyles: { 
+              fillColor: [100, 100, 100],
+              textColor: [255, 255, 255],
+              fontStyle: 'bold'
+            }
+          });
+        }
+      }
+
+      // Salvar o PDF
+      doc.save(`relatorio_${tipo}_${new Date().toISOString().slice(0, 10)}.pdf`);
+    }
+  }
+
+  // Função auxiliar para formatar data
+  function formatDate(dateString) {
+    if (!dateString) return '-';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('pt-BR');
+  }
+
+  // Função para exibir alertas
+  function showAlert(message, type = 'info') {
+    // Verificar se já existe um alert container
+    let alertContainer = document.getElementById('alert-container');
+
+    if (!alertContainer) {
+      alertContainer = document.createElement('div');
+      alertContainer.id = 'alert-container';
+      alertContainer.style.position = 'fixed';
+      alertContainer.style.top = '10px';
+      alertContainer.style.right = '10px';
+      alertContainer.style.zIndex = '9999';
+      document.body.appendChild(alertContainer);
+    }
+
+    // Criar o alerta
+    const alertElement = document.createElement('div');
+    alertElement.className = `alert alert-${type} alert-dismissible fade show`;
+    alertElement.innerHTML = `
+      ${message}
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Fechar"></button>
+    `;
+
+    // Adicionar ao container
+    alertContainer.appendChild(alertElement);
+
+    // Remover automaticamente após 4 segundos
+    setTimeout(() => {
+      alertElement.classList.remove('show');
+      setTimeout(() => {
+        alertContainer.removeChild(alertElement);
+      }, 150);
+    }, 4000);
+  }
+});`
+);
+
 // Servir o frontend
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Iniciar o servidor
-app.listen(PORT, "0.0.0.0", () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Servidor rodando em http://0.0.0.0:${PORT}`);
 });
